@@ -2,7 +2,7 @@
   "id": "/",
   "name": "OmniLaunch: Local Game Manager & Deals Aggregator",
   "short_name": "OmniLaunch",
-  "version": "0.1",
+  "version": "0.2",
   "description": "Zero-cloud desktop game manager and multi-store deal aggregator for Windows and macOS.",
   "start_url": "/",
   "scope": "/",

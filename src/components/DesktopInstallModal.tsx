@@ -197,8 +197,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npm ci || npm install
+        with: { node-version: 22 }
+      - run: npm install --legacy-peer-deps
       - run: npm run build
       - name: Build Windows .exe
         if: matrix.os == 'windows-latest'
