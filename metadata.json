@@ -1,0 +1,6 @@
+{
+  "name": "OmniLaunch: Local Game Manager & Deals Aggregator",
+  "description": "Zero-cloud desktop game manager and multi-store deal aggregator for Windows and macOS. Compare game deals, track freebies, and launch your local library without store accounts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,168 @@
+name: Build & Release Desktop App
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'manifest.json'
+      - 'public/manifest.json'
+  # Allows manual triggers directly from the GitHub Actions tab anytime
+  workflow_dispatch:
+
+jobs:
+  check-version:
+    name: Check manifest.json Version Change
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.version_detector.outputs.should_build }}
+      version: ${{ steps.version_detector.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect Version Change in manifest.json
+        id: version_detector
+        run: |
+          # Read current version from manifest.json or public/manifest.json
+          CURR_VER=$(node -e "
+            const fs = require('fs');
+            let ver = '';
+            for (const file of ['./manifest.json', './public/manifest.json']) {
+              if (fs.existsSync(file)) {
+                try {
+                  const m = JSON.parse(fs.readFileSync(file, 'utf8'));
+                  if (m.version) { ver = String(m.version).trim(); break; }
+                } catch (e) {}
+              }
+            }
+            console.log(ver || '0.1');
+          ")
+
+          echo "Detected current version in manifest.json: $CURR_VER"
+          echo "version=$CURR_VER" >> $GITHUB_OUTPUT
+
+          # If manually triggered via workflow_dispatch, always build
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual trigger (workflow_dispatch) detected - proceeding with build."
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Check if git has a previous commit to compare against
+          if ! git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            echo "Initial commit or no parent commit detected - proceeding with initial build."
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Read previous version from HEAD~1
+          PREV_VER=$(node -e "
+            const { execSync } = require('child_process');
+            let prev = '';
+            for (const file of ['manifest.json', 'public/manifest.json']) {
+              try {
+                const raw = execSync(\`git show HEAD~1:\${file}\`, { stdio: ['pipe', 'pipe', 'ignore'] }).toString();
+                const m = JSON.parse(raw);
+                if (m.version) { prev = String(m.version).trim(); break; }
+              } catch (e) {}
+            }
+            console.log(prev);
+          ")
+
+          echo "Previous version in manifest.json: '$PREV_VER'"
+          echo "Current version in manifest.json:  '$CURR_VER'"
+
+          if [ "$CURR_VER" != "$PREV_VER" ]; then
+            echo "Version changed from '$PREV_VER' to '$CURR_VER' in manifest.json! Triggering build."
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "No version change in manifest.json (both '$CURR_VER'). Skipping build."
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-release:
+    name: Build Desktop Installer (${{ matrix.os }})
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Sync version to package.json
+        run: |
+          node -e "
+            const fs = require('fs');
+            const v = '${{ needs.check-version.outputs.version }}';
+            const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
+            // Normalize two-part versions like 0.1 to 0.1.0 for semver compatibility in packaging
+            pkg.version = v.split('.').length === 2 ? v + '.0' : v;
+            fs.writeFileSync('./package.json', JSON.stringify(pkg, null, 2));
+            console.log('Synchronized package.json version to', pkg.version);
+          "
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build web assets
+        run: npm run build
+
+      - name: Build & Package Windows Installer (.exe)
+        if: matrix.os == 'windows-latest'
+        run: npx electron-builder --win nsis
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Package macOS DMG (.dmg)
+        if: matrix.os == 'macos-latest'
+        run: npx electron-builder --mac dmg zip
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Package Linux AppImage (.AppImage & .deb)
+        if: matrix.os == 'ubuntu-latest'
+        run: npx electron-builder --linux AppImage deb
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OmniLaunch-Desktop-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: warn
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.version }}
+          name: OmniLaunch v${{ needs.check-version.outputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
