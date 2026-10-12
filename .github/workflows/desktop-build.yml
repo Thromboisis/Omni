@@ -114,7 +114,9 @@ jobs:
           "
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: |
+          node -e "if (require('fs').existsSync('package-lock.json')) require('fs').unlinkSync('package-lock.json');"
+          npm install --legacy-peer-deps --include=optional
 
       - name: Build web assets
         run: npm run build
